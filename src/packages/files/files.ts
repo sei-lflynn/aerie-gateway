@@ -2,11 +2,12 @@ import type { Express } from 'express';
 import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import { customAlphabet } from 'nanoid';
-import { parse } from 'path';
+import path, { parse } from 'path';
 import { getEnv } from '../../env.js';
 import getLogger from '../../logger.js';
 import { auth } from '../auth/middleware.js';
 import { DbMerlin } from '../db/db.js';
+import { FILE_PATH } from '../../util/fileParser.js';
 
 const logger = getLogger('packages/files/files');
 
@@ -86,6 +87,65 @@ export default (app: Express) => {
     } catch (error: any) {
       logger.error(error);
       res.status(404).json({ message: error.message, success: false });
+    }
+  });
+
+  /**
+   * @swagger
+   * /file/{id}:
+   *   get:
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - description: ID of the file
+   *         in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: number
+   *     produces:
+   *       - application/octet-stream
+   *     responses:
+   *       200:
+   *         description: GetFileResponse
+   *     summary: Get the file with the associated ID.
+   *     tags:
+   *       - Files
+   */
+  app.get('/file/:id', filesLimiter, auth, async (req, res) => {
+    const { params } = req;
+    const { id } = params;
+    const noFileFoundError = `No file was found with id: ${id}`;
+
+    try {
+      const { rows, rowCount } = await db.query(
+        `
+        select *
+        from merlin.uploaded_file
+        where id = $1
+        and deleted_date is null;
+      `,
+        [id],
+      );
+
+      if (rowCount && rowCount > 0) {
+        const [row] = rows;
+        const { name } = row;
+
+        const filePath = path.join(FILE_PATH, name);
+
+        res.sendFile(filePath, err => {
+          if (err) {
+            logger.info(`GET /file/{id}: ${noFileFoundError}`);
+            res.status(404).json(err.message);
+          }
+        });
+      } else {
+        res.status(404).json(noFileFoundError);
+      }
+    } catch (error: any) {
+      logger.error(error);
+      res.status(500).json(error.message);
     }
   });
 
